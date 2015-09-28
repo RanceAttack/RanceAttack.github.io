@@ -1,11 +1,6 @@
-# Site settings
-title: blog of RanceA
-email: your-email@domain.com
-description: > # this means to ignore newlines until "baseurl:"
-  my first blog
-baseurl: "" # the subpath of your site, e.g. /blog/
-url: "http://ranceattack.github.io" # the base hostname & protocol for your site
-github_username:  RanceAttack
-
-# Build settings
-markdown: kramdown
+markdown: rdiscount
+permalink: /:year/:month/:title/
+url: http://ranceattack.guthub.io
+author: RanceA
+pygments: true
+paginate: 24
