@@ -112,6 +112,17 @@ class Polygon : GE子类 只存一个点的list,多边形就是一个闭合的�
 
 其他一些Text和Gradient的class 我自己暂时用不到就不例举了
 
+树的基本结构:
+
+```
+		   TGroup
+		   |
+	TGroup-+Element
+	|
+Svg-+Element
+	|  ...
+	
+```
 
 ---
 [JorgeCastilloPrz/AndroidFillableLoaders](https://github.com/JorgeCastilloPrz/AndroidFillableLoaders)
