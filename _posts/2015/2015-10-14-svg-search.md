@@ -1,157 +1,45 @@
 ---
 layout: post
-title: research of svg project
+title: bookmark of jni
 categories:
 - Programming
 tags:
 - Android
-- svg
+- jni
 
 ---
 
-##各种svg库
----
+##JavaVM and JNIEnv
 
-[pents90/svg-android](https://github.com/pents90/svg-android/tree/master/svgandroid)
+JNI defines two key data structures, "JavaVM" and "JNIEnv". Both of these are essentially pointers to pointers to function tables. (In the C++ version, they're classes with a pointer to a function table and a member function for each JNI function that indirects through the table.) The JavaVM provides the "invocation interface" functions, which allow you to create and destroy a JavaVM. In theory you can have multiple JavaVMs per process, but Android only allows one.
 
-将basic 1.1 版本的 SVG文件 解析成 android.graphics.Picture 对象
+The JNIEnv provides most of the JNI functions. Your native functions all receive a JNIEnv as the first argument.
 
-Picture 是一个记录绘制过程的类,比较适合svg
+**The JNIEnv is used for thread-local storage. For this reason, you cannot share a JNIEnv between threads.** If a piece of code has no other way to get its JNIEnv, you should share the JavaVM, and use GetEnv to discover the thread's JNIEnv. (Assuming it has one; see AttachCurrentThread below.)
 
-其实比起绘制对象我更倾向于获得相应的path
+The C declarations of JNIEnv and JavaVM are different from the C++ declarations. **The "jni.h" include file provides different typedefs depending on whether it's included into C or C++.** For this reason it's a bad idea to include JNIEnv arguments in header files included by both languages. (Put another way: if your header file requires #ifdef __cplusplus, you may have to do some extra work if anything in that header refers to JNIEnv.)
 
-- ParserHeloper
-	
-		从svg文本中解析数字
-- SVG
-		
-		用来描述矢量图,附带绘制范围
+##Threads
+All threads are Linux threads, scheduled by the kernel. They're usually started from managed code (using Thread.start), but they can also be created elsewhere and then attached to the JavaVM. For example, a thread started with pthread_create can be attached with the JNI AttachCurrentThread or AttachCurrentThreadAsDaemon functions. **Until a thread is attached, it has no JNIEnv, and cannot make JNI calls.**
 
-- SVGParser
+Attaching a natively-created thread causes a java.lang.Thread object to be constructed and added to the "main" ThreadGroup, making it visible to the debugger. Calling AttachCurrentThread on an already-attached thread is a no-op.
 
-		解析文件的入口
-		
-		
----
-[geftimov/android-pathview](https://github.com/geftimov/android-pathview)
+Android does not suspend threads executing native code. If garbage collection is in progress, or the debugger has issued a suspend request, Android will pause the thread the next time it makes a JNI call.
 
-一个可以动画绘制path和svg的绘图view,
-
-依赖[BigBadaboom/androidsvg](https://github.com/BigBadaboom/androidsvg)
-
----
-
-[androidsvg](http://bigbadaboom.github.io/androidsvg/)
-同时支持 1.1 和 1.2 版的svg
-
-除了动画和滤镜大部分都能支持
-
-没有直接将命令转换为绘图, 而是先将命令和数值封装起来, 需要图形的时候再去生成 非常方便我们获取这些数据
-
-使用方法
-
-```
-SVG svg = SVG.getFromAsset(getContext().getAssets(),svgPath);
-svg.registerExternalFileResolver(myResolver);
-
-svg.renderToCanvas(canvas);
-```
-class Style : 包含了svg的附加属性,fill stroke等
-
-class Box : 记录一个正矩形区域,支持交集操作
-
-class SvgObject : svg中的最小子图形,包含SVG 和父SvgContainer的引用
-
-interface SvgContainer : 管理SvgObject,"获取全部"和"添加一个"
-
-class SvgElementBase : 继承SvgObject, 具有id,style,classname等属性
-
-```
-class SvgElement : SvgElementBase的补充 ,增加了一个Box boundingBox属性
-
-interface SvgConditional : 实现的类需增加
- Feastures, Extensions, SystemLanguage, Formats,Fonts属性
- 
-class SvgConditionanlElement : SvgElement实现SvgConditional的子类  
- 
-class SvgConditionalContainer : 比SvgConditionanlElement多实现了SvgContainer,现在可以作为一个Group了
-
-class SvgPreserveAspectRatioContainer : 比SvgConditionalContainer 多了一个 PreserveAspectRatio 成员,添加了尺寸适配
-
-class SvgViewBoxContainer : 比上面增加了一个Box viewBox属性,现在有bounding 和 view 两个Box
-
-```
-class Svg : 根SvgGroup, 有id,style,classname,boundingBox,viewBox,
-Feastures, Extensions, SystemLanguage, Formats,Fonts等属性,有PreserveAspectRatio支持适配,带尺寸和坐标
+Threads attached through JNI must call DetachCurrentThread before they exit. If coding this directly is awkward, in Android 2.0 (Eclair) and higher you can use pthread_key_create to define a destructor function that will be called before the thread exits, and call DetachCurrentThread from there. (Use that key with pthread_setspecific to store the JNIEnv in thread-local-storage; that way it'll be passed into your destructor as the argument.)
 
 
+##jclass, jmethodID, and jfieldID
+If you want to access an object's field from native code, you would do the following:
 
-class Group : 作为Group支持子图形的Matrix变形
+> * Get the class object reference for the class with **FindClass**
+> * Get the field ID for the field with **GetFieldID**
+> * Get the contents of the field with something appropriate, such as **GetIntField**
 
-class Defs : 标示为不直接转化的Group
+Similarly, to call a method, you'd first get a class object reference and then a method ID. The IDs are often just pointers to internal runtime data structures. Looking them up may require several string comparisons, but once you have them the actual call to get the field or invoke the method is very quick.
 
-class Use : 带坐标和长宽的Group (为什么不用Box?)
+If performance is important, it's useful to look the values up once and cache the results in your native code. Because there is a limit of one JavaVM per process, it's reasonable to store this data in a static local structure.
 
-class Stop : 一个不关心子Element的Group
+The class references, field IDs, and method IDs are guaranteed valid until the class is unloaded. Classes are only unloaded if all classes associated with a ClassLoader can be garbage collected, which is rare but will not be impossible in Android. **Note however that the jclass is a class reference and must be protected with a call to *NewGlobalRef (see the next section).**
 
-class GraphicsElement : 基础的SvgConditionanlElement,多支持一个Matrix变形, 这个类用于各种多边形和圆的数据建模
-
-class Path : GE子类,记录Path的命令和点的个数
-
-class PathDefinition : 把Path的命令和数字值分别用数组存起来,数组长度的扩展是自己做的(没有用ArrayList<>...)
-
-class Rect : GE子类,记录矩形长宽坐标和圆角
-
-class Circle : GE子类,记录圆心和半径
-
-class Ellipse : GE子类,记录椭圆的圆心和两个半径
-
-class Line , PolyLine: 线
-
-class Polygon : GE子类 只存一个点的list,多边形就是一个闭合的折线嘛
-
-其他一些Text和Gradient的class 我自己暂时用不到就不例举了
-
-树的基本结构:
-
-```
-		   TGroup
-		   |
-	TGroup-+Element
-	|
-Svg-+Element
-	|  ...
-	
-```
-
----
-[JorgeCastilloPrz/AndroidFillableLoaders](https://github.com/JorgeCastilloPrz/AndroidFillableLoaders)
-
-一个使用灌注动画的进度条,自己实现的svg绘制图形.
-
-这个项目只关注于获取svg的path并将之转换成android.graphics.Path, 支持 M C L H V Z 命令的识别
-
-缺点是不支持polygon circle等的解析,逻辑比较简单 适合学习
-
-- SvgPathParser
-
-		将svg文件的path解析为 android.graphics.Path
-	advanceToNextToken()
-
-	解析字符 从全局变量mIndex开始遍历直到发现命令字母和数字,返回1(绝对坐标命令),2(相对坐标命令),3(数字相关)
-
-	consumeCommand()
-
-	返回mIndex处的命令字符
-	
-	consumeValue()
-	
-	返回mIndex后面的一个float数字
-	
-	parsePath()
-	
-	首先创建path对象,重置mIndex,并遍历查找M命令
-	之后则根据逻辑来生成path
-	
-	
-	
+If you would like to cache the IDs when a class is loaded, and automatically re-cache them if the class is ever unloaded and reloaded, the correct way to initialize the IDs is to add a piece of code that looks like this to the appropriate class:
